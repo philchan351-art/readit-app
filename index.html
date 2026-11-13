@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReadIt · 看书与听书，共用一条进度</title>
+<!-- ?v= 和下面 JS 一个道理：Chrome 会拿 CSS 的磁盘缓存，改完样式不加版本号，
+     你会看到"改了没生效"。改 css 就把 v 往上加。 -->
+<link rel="stylesheet" href="css/app.css?v=10">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <header class="brand">
+      <span class="logo">ReadIt</span>
+    </header>
+
+    <div class="shelf-tools">
+      <button id="btn-import" class="btn wide">导入书籍</button>
+      <input type="file" id="file-input"
+             accept=".txt,.md,.markdown,.html,.htm,.xhtml,.epub,.docx,.pdf" hidden multiple>
+    </div>
+
+    <div class="shelf-label">书架 <span id="shelf-count"></span></div>
+    <nav class="shelf" id="shelf" aria-label="书架"></nav>
+
+    <footer class="side-foot">
+      <div class="backup-row">
+        <button id="btn-export" class="btn small" title="导出书架+进度为 JSON 文件">导出备份</button>
+        <button id="btn-import-backup" class="btn small" title="从 JSON 备份恢复">恢复备份</button>
+        <input type="file" id="backup-input" accept=".json,application/json" hidden>
+      </div>
+      <button id="btn-clear-progress" class="btn ghost wide">清空全部进度</button>
+    </footer>
+  </aside>
+
+  <main class="main">
+
+    <div id="empty-state" class="empty">
+      <button class="btn" id="btn-open-sample">打开示例书</button>
+    </div>
+
+    <section id="workbench" class="workbench" hidden>
+
+      <div class="topbar">
+        <button id="btn-back" class="btn icon" title="返回书架">‹</button>
+        <div class="title-wrap">
+          <h1 id="book-title"></h1>
+          <span id="book-sub"></span>
+        </div>
+        <div class="typo-tools">
+          <button id="btn-font-minus" class="btn small" title="缩小字号">A-</button>
+          <button id="btn-font-plus" class="btn small" title="放大字号">A+</button>
+          <button id="btn-theme" class="btn small" title="切换主题">纸白</button>
+        </div>
+        <div class="mode-switch" role="tablist">
+          <button id="mode-read" class="mode active" role="tab">看书</button>
+          <button id="mode-listen" class="mode" role="tab">听书</button>
+        </div>
+      </div>
+
+      <div class="chapter-bar">
+        <button id="btn-prev-chapter" class="btn small">上一章</button>
+        <select id="chapter-select" class="chapter-select" aria-label="选择章节"></select>
+        <button id="btn-next-chapter" class="btn small">下一章</button>
+        <div class="progress-line"><i id="progress-fill"></i></div>
+        <span class="ratio" id="ratio">0%</span>
+      </div>
+
+      <div id="tts-warn" class="warn" hidden></div>
+
+      <article id="reader" class="reader" tabindex="-1"></article>
+
+      <div id="listen-panel" class="listen" hidden>
+        <div class="transport">
+          <button id="btn-prev-cue" class="btn icon" title="上一句">⏮</button>
+          <button id="btn-play" class="btn play" title="播放 / 暂停">▶ 播放</button>
+          <button id="btn-next-cue" class="btn icon" title="下一句">⏭</button>
+          <button id="btn-stop" class="btn icon" title="停止">■</button>
+        </div>
+
+        <div class="controls">
+          <label class="ctrl">
+            <span>语速 <b id="rate-val">1.0</b></span>
+            <input type="range" id="rate" min="0.6" max="1.8" step="0.1" value="1">
+          </label>
+          <label class="ctrl">
+            <span>音色来源</span>
+            <select id="engine-select" class="sleep-select">
+              <option value="system">系统音色（离线）</option>
+              <option value="cloud">云端神经音色</option>
+            </select>
+          </label>
+          <label class="ctrl">
+            <span>音色</span>
+            <select id="voice-select" class="voice-select"></select>
+          </label>
+          <label class="ctrl">
+            <span>定时关闭</span>
+            <select id="sleep-select" class="sleep-select">
+              <option value="0">不开</option>
+              <option value="10">10 分钟</option>
+              <option value="15">15 分钟</option>
+              <option value="30">30 分钟</option>
+              <option value="45">45 分钟</option>
+              <option value="60">60 分钟</option>
+            </select>
+          </label>
+          <label class="ctrl check">
+            <input type="checkbox" id="auto-next" checked>
+            <span>章末自动下一章</span>
+          </label>
+        </div>
+
+        <div class="status-line">
+          <span id="status-text">未播放</span>
+          <span id="sleep-text" class="dim"></span>
+        </div>
+      </div>
+
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- 解析依赖（全部本地，不联网）：EPUB→JSZip · DOCX→mammoth · PDF→pdf.js 3.11 -->
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/mammoth.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+
+<!-- ?v= 用来击穿缓存：实测过 Chrome 会拿旧 core.js 的磁盘缓存跑，
+     差点把"修复没生效"当成结论。改完代码把 v 一起加 1。 -->
+<script src="js/diag.js?v=8"></script><!-- 放最前面：要能抓到后面各脚本的加载错误 -->
+<script src="js/core.js?v=8"></script>
+<script src="js/parse.js?v=8"></script>
+<script src="js/store.js?v=8"></script>
+<script src="js/tts.js?v=8"></script>
+<script src="js/tts-cloud.js?v=8"></script>
+<script src="js/books-data.js?v=8"></script>
+<script src="js/app.js?v=8"></script>
+</body>
+</html>
