@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ReadIt · 看书与听书，共用一条进度</title>
+<title>readit · 看书与听书，共用一条进度</title>
 <!-- 手机「添加到主屏幕」用的图标。静态发布在 /readit-app/ 这类子目录下时路径必须写相对的，
      写成 /favicon-180.png 会指到域名根目录，图标就没了。 -->
 <link rel="apple-touch-icon" href="favicon-180.png">
@@ -12,14 +12,14 @@
 <meta name="theme-color" content="#0E1A2C">
 <!-- ?v= 和下面 JS 一个道理：Chrome 会拿 CSS 的磁盘缓存，改完样式不加版本号，
      你会看到"改了没生效"。改 css 就把 v 往上加。 -->
-<link rel="stylesheet" href="css/app.css?v=10">
+<link rel="stylesheet" href="css/app.css?v=11">
 </head>
 <body>
 <div id="app">
 
   <aside class="sidebar">
     <header class="brand">
-      <span class="logo">ReadIt</span>
+      <span class="logo">readit</span>
     </header>
 
     <div class="shelf-tools">
@@ -140,13 +140,13 @@
 
 <!-- ?v= 用来击穿缓存：实测过 Chrome 会拿旧 core.js 的磁盘缓存跑，
      差点把"修复没生效"当成结论。改完代码把 v 一起加 1。 -->
-<script src="js/diag.js?v=8"></script><!-- 放最前面：要能抓到后面各脚本的加载错误 -->
-<script src="js/core.js?v=8"></script>
-<script src="js/parse.js?v=8"></script>
-<script src="js/store.js?v=8"></script>
-<script src="js/tts.js?v=8"></script>
-<script src="js/tts-cloud.js?v=8"></script>
-<script src="js/books-data.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/diag.js?v=9"></script><!-- 放最前面：要能抓到后面各脚本的加载错误 -->
+<script src="js/core.js?v=9"></script>
+<script src="js/parse.js?v=9"></script>
+<script src="js/store.js?v=9"></script>
+<script src="js/tts.js?v=9"></script>
+<script src="js/tts-cloud.js?v=9"></script>
+<script src="js/books-data.js?v=9"></script>
+<script src="js/app.js?v=9"></script>
 </body>
 </html>
