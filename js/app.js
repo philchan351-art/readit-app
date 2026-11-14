@@ -72,8 +72,16 @@
         warn('本机存储回落到「' + store.backend() + '」模式（IndexedDB 不可用，常见于无痕窗口或 file:// 限制）。' +
              '书架与进度仍能保存，但容量较小；建议用正常窗口的桌面 Edge 打开。');
       }
-      // 上次在带服务器的地址上选了云端音色，这次改用纯静态地址打开也要自洽，不能闷声
-      if (state.settings.engine === 'cloud') switchEngine('cloud');
+      // 上次在带服务器的地址上选了云端音色，这次改用纯静态地址打开也要自洽，不能闷声。
+      // 这里只在「确定没有中转」时才动设置，网络抖一下就把人切走是更糟的体验。
+      if (state.settings.engine === 'cloud') {
+        probeCloud().then(function (s) {
+          if (s === 'none') {
+            applyEngine('system');
+            warn('之前选的是云端音色，但这个地址上没有 TTS 中转服务，已切回系统音色。');
+          }
+        });
+      }
     }).catch(function (e) {
       // 存储坏了也不能白屏：示例书照样能读，只是不保存
       state.books = (global.ReadItSamples || []).slice();
@@ -358,20 +366,46 @@
     return global.ReadItTts.createTtsEngine(hooks);
   }
 
+  /**
+   * 探一次云端中转在不在，分四种结论，别一棍子打死：
+   *   ok     —— 有中转且拿到音色列表，放心切
+   *   locked —— 有中转但你还没解锁（401）
+   *   retry  —— 网络抖动 / 服务 5xx，**说不清**，不能据此断定不能用
+   *   none   —— 404 或压根没有 fetch，这台就是纯静态托管
+   */
+  function probeCloud() {
+    if (!global.fetch) return Promise.resolve('none');
+    return Promise.resolve(global.fetch('/tts/voices')).then(function (r) {
+      if (r.ok) {
+        return r.json().then(function (d) {
+          return (d && d.voices && d.voices.length) ? 'ok' : 'retry';
+        }, function () { return 'retry'; });
+      }
+      if (r.status === 404) return 'none';
+      if (r.status === 401) return 'locked';
+      return 'retry';
+    }, function () { return 'retry'; });      // fetch 本身失败：说不清
+  }
+
   function switchEngine(name) {
     if (name !== 'cloud') { applyEngine(name); return; }
-    // 静态托管（GitHub Pages 就是）没有 /tts：切过去会一声不响地失败。
-    // 所以先探一次，探不到就当场说清楚并退回系统音色，别让用户对着静音猜。
-    Promise.resolve(global.fetch ? global.fetch('/tts/voices') : null).then(function (r) {
-      return (r && r.ok) ? r.json() : null;
-    }).then(function (d) {
-      if (d && d.voices && d.voices.length) { applyEngine('cloud'); return; }
+    // 静态托管（GitHub Pages 就是）没有 /tts：切过去只会一声不响地失败，必须当场说清。
+    probeCloud().then(function (s) {
+      if (s === 'ok') { applyEngine('cloud'); return; }
+      if (s === 'locked') {
+        applyEngine('cloud');
+        warn('服务器在，但当前还没解锁：解锁之前取不到音色列表，播放会失败。');
+        return;
+      }
+      if (s === 'retry') {
+        // 只是这一次没取到列表，不能因此断人说「你用不了」—— 保留选择，只提醒
+        applyEngine('cloud');
+        warn('暂时没取到云端音色列表（网络或服务异常）。已切到云端音色，要是播放没声音，再切回系统音色。');
+        return;
+      }
       applyEngine('system');
       warn('这个地址上没有 TTS 中转服务（GitHub Pages 之类的纯静态托管就是这样），' +
            '云端神经音色用不了，已自动切回系统音色。要用云端音色请用带 server.py 的地址打开。');
-    }, function () {
-      applyEngine('system');
-      warn('连不上 TTS 中转服务，已自动切回系统音色。');
     });
   }
 
