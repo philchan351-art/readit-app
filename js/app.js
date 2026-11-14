@@ -216,7 +216,13 @@
       var cover = doc.createElement('div');
       cover.className = 'cover';
       cover.style.background = 'linear-gradient(150deg,' + b.cover.from + ',' + b.cover.to + ')';
-      cover.textContent = b.title.slice(0, 1);
+      // 首字已全局隐藏（app.css 基础规则 .cover-letter{display:none}，2026-11-14 用户指定）；
+      // span 照旧生成，恢复显示只需删那条 CSS，不动这里的 DOM
+      var letter = doc.createElement('span');
+      letter.className = 'cover-letter';
+      letter.setAttribute('aria-hidden', 'true');
+      letter.textContent = b.title.slice(0, 1);
+      cover.appendChild(letter);
 
       var meta = doc.createElement('div');
       meta.className = 'book-meta';

@@ -185,6 +185,10 @@ body::before {
   content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 7px;
   background: linear-gradient(to right, rgba(0, 0, 0, .42), rgba(0, 0, 0, .08) 62%, rgba(255, 255, 255, .22));
 }
+/* 封面中间的字整体撤掉（2026-11-14 用户指定）：桌面与手机一律不渲染首字，
+   封面只留渐变色块 + 书脊高光。JS 仍照常生成这个 span（不动 DOM，零风险），
+   想恢复字就删掉下面这一行。 */
+.cover-letter { display: none; }
 .book-meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .book-meta b {
   display: block; font-size: 13.5px; font-weight: 600; line-height: 1.4;
