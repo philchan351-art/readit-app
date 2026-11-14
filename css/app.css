@@ -457,7 +457,7 @@ option { background: var(--panel); color: var(--text); }
     mask-image: none;
     -webkit-mask-image: none;
   }
-  .book-item { display: block; min-width: 0; overflow: hidden; padding: 0; margin: 0; border: 0; background: none; }
+  .book-item { display: block; position: relative; min-width: 0; overflow: hidden; padding: 0; margin: 0; border: 0; background: none; }
   .book-item:hover { transform: none; background: none; border-color: transparent; }
   .book-item.active { background: none; border-color: transparent; box-shadow: none; backdrop-filter: none; }
   .book-item.active .cover { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -471,7 +471,32 @@ option { background: var(--panel); color: var(--text); }
     box-shadow: 0 5px 14px -8px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .18);
   }
   .cover::after { width: 7px; }
-  .book-meta { display: block; min-width: 0; overflow: hidden; padding: 6px 1px 0; }
-  .book-meta b { display: block; font-size: 11px; line-height: 1.3; max-height: 2.6em; overflow: hidden; }
-  .book-meta span, .book-meta em { display: block; font-size: 10px; margin-top: 1px; }
+  /* 手机宫格：封面中间的首字让位，把书名写到封面正中间。
+     旧写法把书名排在封面下方，被 .book-item 的 overflow:hidden 剪成半截字，手机上等于没有书名。 */
+  .cover-letter { display: none; }
+  .book-meta {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0; min-width: 0;
+    /* 上内边距专门让开右上角的 ×，长书名不会和删除按钮叠在一起 */
+    padding: 36px 7px 10px; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(0, 0, 0, .16), rgba(0, 0, 0, .08) 45%, rgba(0, 0, 0, .32));
+    border-radius: 6px;
+  }
+  /* 基础规则里 .book-meta b 是 white-space:nowrap，长书名只会一行加省略号（实测 14 字只剩 6 字），
+     这里必须放开成可换行并限三行。line-clamp 不生效时下面那条 max-height 兜底。 */
+  .book-meta b {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    white-space: normal; overflow-wrap: anywhere; word-break: normal;
+    font-size: 11.5px; line-height: 1.35; font-weight: 600;
+    max-height: 47px; overflow: hidden;
+    color: #fff; text-align: center; text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+  }
+  .book-meta span { display: none; }
+  .book-meta em {
+    display: block; max-width: 100%; margin-top: 3px;
+    font-size: 10px; font-style: normal; color: rgba(255, 255, 255, .88);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  }
 }
