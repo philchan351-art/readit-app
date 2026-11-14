@@ -142,6 +142,25 @@ body::before {
 .backup-row .btn { flex: 1; }
 /* 侧栏按钮间距（微信入口已撤，.btn.wechat 规则一并删掉） */
 
+/* 书架卡片 + 删除按钮：按钮是卡片的兄弟节点，靠绝对定位压在卡片右上角 */
+.book-wrap { position: relative; }
+.book-del {
+  position: absolute; top: 6px; right: 6px; z-index: 3;
+  width: 24px; height: 24px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--glass-2); color: var(--muted);
+  font-size: 15px; line-height: 22px; cursor: pointer;
+  opacity: .45; transition: opacity .16s ease, color .16s ease, border-color .16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.book-wrap:hover .book-del, .book-del:hover, .book-del:focus-visible { opacity: 1; }
+.book-del:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+/* 触屏没有 hover，且删除入口不能只靠悬停才看得见，所以直接常驻可见并把点按区域放大 */
+@media (hover: none) {
+  .book-del { opacity: .8; width: 30px; height: 30px; }
+}
+
 .book-item {
   display: flex; gap: 11px; align-items: center; width: 100%;
   padding: 9px 10px; margin: 3px 0; border: 1px solid transparent; border-radius: var(--r);

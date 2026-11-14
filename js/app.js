@@ -24,7 +24,8 @@
   var state = {
     books: [],
     progress: {},
-    settings: { theme: 'paper', fontStep: 2, rate: 1, voiceId: '', autoNext: true, engine: 'system' },
+    settings: { theme: 'paper', fontStep: 2, rate: 1, voiceId: '', autoNext: true, engine: 'system',
+                hiddenSamples: [] },
     bookId: null,
     pos: { chapterIndex: 0, cueIndex: 0 },
     mode: 'read',
@@ -42,7 +43,7 @@
      'listen-panel', 'btn-play', 'btn-prev-cue', 'btn-next-cue', 'btn-stop', 'rate', 'rate-val',
      'voice-select', 'engine-select', 'sleep-select', 'sleep-text', 'auto-next', 'status-text', 'tts-warn', 'toast',
      'btn-font-minus', 'btn-font-plus', 'btn-theme',
-     'btn-export', 'btn-import-backup', 'backup-input'].forEach(function (id) {
+      'btn-export', 'btn-import-backup', 'backup-input', 'btn-show-samples'].forEach(function (id) {
       els[id] = doc.getElementById(id);
     });
 
@@ -54,7 +55,7 @@
     }).then(function (all) {
       state.settings = Object.assign({}, state.settings, all.settings || {});
       state.progress = all.progress || {};
-      state.books = (global.ReadItSamples || []).slice().concat(all.books || []);
+      state.books = visibleSamples(global.ReadItSamples).concat(all.books || []);
 
       applySettings();
       bindEvents();
@@ -180,13 +181,34 @@
 
   /* ================= 书架 ================= */
 
+  // 内置样书不在存储层里（软件自带内容），所以对它只能记「隐藏名单」，不能走真删除
+  function visibleSamples(list) {
+    var hidden = (state.settings && state.settings.hiddenSamples) || [];
+    return (list || []).slice().filter(function (b) { return hidden.indexOf(b.id) < 0; });
+  }
+
+  // 「是不是内置样书」按 id 判定，不按 book.source：备份恢复进来的书 source 字段不一定规范，
+  // 误判会让它走隐藏分支而不是真删除，结果就是「点了删除却怎么也删不掉」。
+  function isSampleBook(book) {
+    var hit = false;
+    (global.ReadItSamples || []).forEach(function (b) { if (b.id === book.id) hit = true; });
+    return hit;
+  }
+
   function renderShelf() {
     var shelf = els.shelf;
     shelf.innerHTML = '';
     els['shelf-count'].textContent = '(' + state.books.length + ')';
+    if (els['btn-show-samples']) {
+      els['btn-show-samples'].hidden = !(state.settings.hiddenSamples || []).length;
+    }
 
     state.books.forEach(function (b) {
       var p = state.progress[b.id];
+      // 卡片和删除按钮是兄弟节点：button 里再套 button 是非法 HTML，iOS Safari 上点击归属不可靠
+      var wrap = doc.createElement('div');
+      wrap.className = 'book-wrap';
+
       var btn = doc.createElement('button');
       btn.className = 'book-item' + (b.id === state.bookId ? ' active' : '');
       btn.type = 'button';
@@ -216,8 +238,72 @@
       btn.setAttribute('aria-label', b.title + '，' + b.author + '，共 ' + b.chapters.length + ' 章' +
         (progressText ? '，已读 ' + progressText : ''));
       btn.addEventListener('click', function () { openBook(b.id); });
-      shelf.appendChild(btn);
+
+      var del = doc.createElement('button');
+      del.type = 'button';
+      del.className = 'book-del';
+      del.textContent = '×';
+      del.title = (isSampleBook(b) ? '隐藏内置样书《' : '删除《') + b.title + '》';
+      del.setAttribute('aria-label', del.title);
+      del.addEventListener('click', function (ev) { if (ev && ev.stopPropagation) ev.stopPropagation(); removeBook(b); });
+
+      wrap.appendChild(btn); wrap.appendChild(del);
+      shelf.appendChild(wrap);
     });
+  }
+
+  /* ================= 删除书架上的书 ================= */
+
+  function removeBook(book) {
+    var builtin = isSampleBook(book);
+    var msg = !builtin
+      ? '删除《' + book.title + '》？\n\n正文和阅读进度会一起删掉，删完找不回来（除非你导出过备份）。'
+      : '隐藏内置样书《' + book.title + '》？\n\n样书是软件自带的，不会真的删除，之后点书架上方的「显示内置样书」就能恢复。';
+    if (!global.confirm(msg)) return;
+
+    if (builtin) {
+      var hid = (state.settings.hiddenSamples || []).slice();
+      if (hid.indexOf(book.id) < 0) hid.push(book.id);
+      state.settings.hiddenSamples = hid;
+      saveSettings();
+      dropFromShelf(book.id);
+      toast('已隐藏样书《' + book.title + '》');
+      return;
+    }
+
+    // 真删除：等存储层确认成功再改界面，避免「界面没了但服务端还在」这种不一致
+    if (!store) { dropFromShelf(book.id); toast('已删除《' + book.title + '》（本机存储不可用，仅本次生效）'); return; }
+    store.removeBook(book.id).then(function () {
+      dropFromShelf(book.id);
+      toast('已删除《' + book.title + '》');
+    }).catch(function (e) {
+      toast('删除《' + book.title + '》失败：' + ((e && e.message) || e) + '。书还在书架上，没有改动。');
+    });
+  }
+
+  function dropFromShelf(bookId) {
+    state.books = state.books.filter(function (b) { return b.id !== bookId; });
+    delete state.progress[bookId];
+    if (state.bookId === bookId) {
+      if (engine && engine.stop) { try { engine.stop(); } catch (e) { /* 忽略 */ } }
+      state.bookId = null;
+      els.workbench.hidden = true;
+      els['empty-state'].hidden = false;
+    }
+    renderShelf();
+  }
+
+  function showHiddenSamples() {
+    state.settings.hiddenSamples = [];
+    saveSettings();
+    // 按内置顺序重建，别用 unshift 逐本插，否则恢复后样书顺序会整个倒过来。
+    // 判断「是不是样书」按 id 而不是按 source：备份恢复可能带进 source 不规范的书，不能把它们弄丢。
+    var sampleId = {};
+    (global.ReadItSamples || []).forEach(function (b) { sampleId[b.id] = true; });
+    var keep = state.books.filter(function (b) { return !sampleId[b.id]; });
+    state.books = visibleSamples(global.ReadItSamples).concat(keep);
+    renderShelf();
+    toast('内置样书已恢复');
   }
 
   /* ================= 打开书 / 渲染章节 ================= */
@@ -570,6 +656,8 @@
       if (!global.confirm('确定清空所有书的阅读进度？（不会删除导入的书籍）')) return;
       clearProgressAll(); renderShelf(); toast('进度已清空');
     });
+
+    if (els['btn-show-samples']) els['btn-show-samples'].addEventListener('click', showHiddenSamples);
 
     els['btn-export'].addEventListener('click', exportBackup);
     els['btn-import-backup'].addEventListener('click', function () { els['backup-input'].click(); });
