@@ -621,11 +621,10 @@ option { background: var(--panel); color: var(--text); }
 
 /* ============================================================
    12. 整屏阅读（2026-11-15 用户：看书状态要整屏，只留少数按钮）
-   —— 进书时 body.reading：侧栏已由 JS 收起；章节条退出界面
-   （章名/页码/进度都在页脚，跳章走「目录」和页缘点击）；
-   顶栏变成悬浮在书页顶部的一条半透明控制带。
+   —— 进书时 body.reading：侧栏已由 JS 收起；章节条收进底部
+   「阅读设置」面板（第 13 节），顶栏变悬浮控制带。
    ============================================================ */
-.chapter-bar { display: none; }
+
 
 body.reading #app { height: 100vh; height: 100svh; overflow: hidden; }
 body.reading .main { height: auto; }
@@ -655,3 +654,66 @@ body.reading .listen { position: static; }
   body.reading .btn.small { padding: 3px 8px; font-size: 11.5px; }
   body.reading .mode { padding: 4px 10px; font-size: 12px; }
 }
+
+/* ============================================================
+   13. 阅读设置面板 + 字体选择 + 亮度（2026-11-16 用户：
+   「章节选择消失了，增加字体选择、明亮度之类」）
+   —— Aa 键从底部滑出面板：章节选择（回归）、字号、主题、字体、亮度。
+   章节名在页脚，点它直达扉页目录。
+   ============================================================ */
+#sheet-mask {
+  position: absolute; inset: 0; z-index: 8;
+  background: rgba(15, 20, 28, .30);
+}
+.read-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 9;
+  background: var(--glass-strong);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-top: none; border-radius: 18px 18px 0 0;
+  box-shadow: 0 -18px 44px -22px rgba(20, 24, 32, .5);
+  padding: 8px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 12px;
+  animation: readit-sheet .2s ease-out;
+}
+@keyframes readit-sheet {
+  from { transform: translateY(24px); opacity: .3; }
+  to   { transform: none; opacity: 1; }
+}
+.sheet-grip { width: 40px; height: 4px; border-radius: 4px; background: var(--line); margin: 2px auto 0; }
+.sheet-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sheet-label { font-size: 11px; font-weight: 600; color: var(--dim); letter-spacing: 1.5px; flex: none; }
+.read-sheet .chapter-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 0 10px; margin: 0; border-bottom: 1px solid var(--line-soft);
+  position: static; background: none; box-shadow: none;
+}
+.read-sheet .chapter-select { flex: 1 1 120px; min-width: 0; }
+
+/* 字体二段切换 */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg-b {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 5px 16px; font-size: 12.5px; color: var(--dim); font-family: inherit;
+}
+.seg-b.on { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+
+/* 亮度滑条 */
+#bright-range { flex: 1; min-width: 120px; accent-color: var(--accent); }
+
+/* 亮度遮罩：盖住整屏（含悬浮条/面板），pointer-events:none 不挡任何点击 */
+#dim-overlay {
+  position: fixed; inset: 0; z-index: 90; background: #000;
+  opacity: 0; pointer-events: none; transition: opacity .15s ease;
+}
+
+/* 黑体选项：书页换无衬线（行款/行距不变，装箱会因 pageKey 指纹自动重排） */
+html[data-font='sans'] .reader,
+html[data-font='sans'] .page-text {
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+}
+
+/* 页脚章名可点的视觉暗示 */
+.pf-ch { cursor: pointer; color: var(--accent-ink); }
+.pf-ch::after { content: " ⌄"; font-weight: 700; }
+
+body.reading .topbar { z-index: 10; }

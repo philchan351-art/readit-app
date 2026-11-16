@@ -12,7 +12,7 @@
 <meta name="theme-color" content="#0E1A2C">
 <!-- ?v= 和下面 JS 一个道理：Chrome 会拿 CSS 的磁盘缓存，改完样式不加版本号，
      你会看到"改了没生效"。改 css 就把 v 往上加。 -->
-<link rel="stylesheet" href="css/app.css?v=16">
+<link rel="stylesheet" href="css/app.css?v=17">
 </head>
 <body>
 <div id="app">
@@ -77,9 +77,7 @@
         </div>
         <div class="typo-tools">
           <button id="btn-toc" class="btn small" title="目录/扉页">目录</button>
-          <button id="btn-font-minus" class="btn small" title="缩小字号">A-</button>
-          <button id="btn-font-plus" class="btn small" title="放大字号">A+</button>
-          <button id="btn-theme" class="btn small" title="切换主题">纸白</button>
+          <button id="btn-settings" class="btn small" title="阅读设置：章节/字号/字体/亮度/主题">Aa</button>
         </div>
         <div class="mode-switch" role="tablist">
           <button id="mode-read" class="mode active" role="tab">看书</button>
@@ -87,13 +85,37 @@
         </div>
       </div>
 
-      <div id="chapter-bar" class="chapter-bar">
-        <button id="btn-prev-chapter" class="btn small">上一章</button>
-        <select id="chapter-select" class="chapter-select" aria-label="选择章节"></select>
-        <button id="btn-next-chapter" class="btn small">下一章</button>
-        <div class="progress-line"><i id="progress-fill"></i></div>
-        <span class="ratio" id="ratio">0%</span>
-      </div>
+      <!-- 阅读设置面板：章节选择（回来了）+ 字号 + 主题 + 字体 + 亮度。
+           A- / A+ / 主题按钮沿用原 ID，JS 绑定不用动。 -->
+      <div id="sheet-mask" hidden></div>
+      <section id="read-sheet" class="read-sheet" hidden>
+        <div class="sheet-grip"></div>
+        <div id="chapter-bar" class="chapter-bar sheet-row">
+          <button id="btn-prev-chapter" class="btn small">上一章</button>
+          <select id="chapter-select" class="chapter-select" aria-label="选择章节"></select>
+          <button id="btn-next-chapter" class="btn small">下一章</button>
+          <div class="progress-line"><i id="progress-fill"></i></div>
+          <span class="ratio" id="ratio">0%</span>
+        </div>
+        <div class="sheet-row">
+          <span class="sheet-label">字号</span>
+          <button id="btn-font-minus" class="btn small" title="缩小字号">A-</button>
+          <button id="btn-font-plus" class="btn small" title="放大字号">A+</button>
+          <span class="sheet-label">主题</span>
+          <button id="btn-theme" class="btn small" title="切换主题">纸白</button>
+        </div>
+        <div class="sheet-row">
+          <span class="sheet-label">字体</span>
+          <span class="seg">
+            <button id="btn-font-serif" class="seg-b">宋体</button>
+            <button id="btn-font-sans" class="seg-b">黑体</button>
+          </span>
+        </div>
+        <div class="sheet-row">
+          <span class="sheet-label">亮度</span>
+          <input type="range" id="bright-range" min="40" max="100" step="1" aria-label="亮度">
+        </div>
+      </section>
 
       <div id="tts-warn" class="warn" hidden></div>
 
@@ -166,6 +188,7 @@
 <script src="js/tts.js?v=9"></script>
 <script src="js/tts-cloud.js?v=9"></script>
 <script src="js/books-data.js?v=9"></script>
-<script src="js/app.js?v=13"></script>
+<script src="js/app.js?v=15"></script>
+<div id="dim-overlay" aria-hidden="true"></div>
 </body>
 </html>

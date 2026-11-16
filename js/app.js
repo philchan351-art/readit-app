@@ -26,7 +26,7 @@
     books: [],
     progress: {},
     settings: { theme: 'paper', fontStep: 2, rate: 1, voiceId: '', autoNext: true, engine: 'system',
-                hiddenSamples: [], lastBookId: '' },
+                hiddenSamples: [], lastBookId: '', fontFamily: 'serif', bright: 100 },
     bookId: null,
     pos: { chapterIndex: 0, cueIndex: 0 },
     pageIndex: 0,
@@ -47,6 +47,8 @@
      'btn-font-minus', 'btn-font-plus', 'btn-theme',
        'btn-export', 'btn-import-backup', 'backup-input', 'btn-show-samples',
        'topbar', 'chapter-bar', 'sidebar', 'btn-toc',
+       'read-sheet', 'sheet-mask', 'btn-settings', 'dim-overlay',
+       'btn-font-serif', 'btn-font-sans', 'bright-range',
        'title-page', 'tp-cover', 'tp-title', 'tp-author', 'tp-line', 'tp-toc',
        'btn-tp-continue', 'btn-tp-restart', 'btn-tp-back'].forEach(function (id) {
       els[id] = doc.getElementById(id);
@@ -401,9 +403,15 @@
   function showTitlePage(on) {
     els['title-page'].hidden = !on;
     els.topbar.hidden = on;
-    els['chapter-bar'].hidden = on;
     els.reader.hidden = on;
     els['listen-panel'].hidden = on || state.mode !== 'listen';
+    if (on) showSheet(false);
+  }
+
+  /** 阅读设置面板（底部滑出）：章节 / 字号 / 主题 / 字体 / 亮度 */
+  function showSheet(on) {
+    els['read-sheet'].hidden = !on;
+    els['sheet-mask'].hidden = !on;
   }
 
   /** 从扉页进入正文。fromStart=true 表示「从头开始」 */
@@ -458,7 +466,8 @@
     var box = els.reader.querySelector('.page-text');
     var w = box ? box.clientWidth : 0;
     var h = box ? box.clientHeight : 0;
-    return [book.id, ci, state.settings.fontStep, w, h, state.settings.theme].join('|');
+    return [book.id, ci, state.settings.fontStep, state.settings.fontFamily,
+            w, h, state.settings.theme].join('|');
   }
 
   var PAGE_END_TEXT = '本章完 · 再点一下右边继续 →';
@@ -478,43 +487,48 @@
     var box = els.reader.querySelector('.page-text');
     var base = '<h2 class="page-title title-ghost" aria-hidden="true">' +
                esc(book.chapters[ci].title) + '</h2>';
+    // flat 带「新段落」标记：装箱必须和渲染同一套段落结构！
+    // 上一版整页只开一个 <p>（段末不分段），而渲染每段一个 <p> 各带 .6em 段距，
+    // 每个段边界渲染就多一行高——390 宽实测 clip=71 的裁字就是这个差值。
     var flat = [];
     chapterParas(book, ci).forEach(function (pr) {
-      pr.forEach(function (i) { flat.push(i); });
+      pr.forEach(function (i, k) { flat.push({ i: i, np: k === 0 }); });
     });
 
     var pages = [];
     var f = 0;
     while (f < flat.length) {
       box.innerHTML = base;
-      var start = flat[f];
+      // 「本章完」占位块每页只造一个，appendChild 对已存在节点＝移动。
+      // 更早一版每加一句新建一个还不拆，十个占位把页提前「装满」——
+      // 真机截图里半屏空白 + 一章 79 页全是它干的（实测教训，别改回去）。
+      var pe = doc.createElement('div');
+      pe.className = 'page-end';
+      pe.textContent = PAGE_END_TEXT;
+      var start = flat[f].i;
       var lastFit = start - 1;
       var curP = null;
       while (f < flat.length) {
-        var i = flat[f];
-        if (!curP) { curP = doc.createElement('p'); box.appendChild(curP); }
+        var it = flat[f];
+        if (!curP || it.np) { curP = doc.createElement('p'); box.appendChild(curP); }
         var sp = doc.createElement('span');
         sp.className = 'cue';
-        sp.setAttribute('data-i', String(i));
-        sp.textContent = cues[i].text.trim();
+        sp.setAttribute('data-i', String(it.i));
+        sp.textContent = cues[it.i].text.trim();
         curP.appendChild(sp);
-        var pe = doc.createElement('div');
-        pe.className = 'page-end';
-        pe.textContent = PAGE_END_TEXT;
-        box.appendChild(pe);                       // 占位块永远在盒子最尾
-        if (i > start && box.scrollHeight > box.clientHeight + 1) {
+        box.appendChild(pe);                       // 移动到最尾，随内容一起计高
+        if (it.i > start && box.scrollHeight > box.clientHeight + 1) {
           curP.removeChild(sp);
           if (!curP.childNodes.length) curP.parentNode.removeChild(curP);
-          box.removeChild(pe);
           curP = null;
-          break;                                   // 本页装满；i 留给下一页（f 不动）
+          break;                                   // 本页装满；这句留给下一页（f 不动）
         }
-        lastFit = i;
+        lastFit = it.i;
         f++;
       }
       pages.push({ s: start, e: lastFit });
       // 防死锁：一页连一句加占位都放不下时，也把它记为一页并前进，绝不原地打转
-      if (lastFit < start) { lastFit = start; f = Math.max(f, flat.indexOf(start) + 1); }
+      if (lastFit < start) { lastFit = start; f = Math.max(f, start + 1); }
     }
     return pages;
   }
@@ -657,7 +671,11 @@
   function updateRatio() {
     var book = currentBook();
     if (!book) return;
-    var ratio = core.readingRatio(cueCounts(book), state.pos.chapterIndex, state.pos.cueIndex);
+    // 和页脚同一基准：都按「本页第一句」算全书进度。
+    // 上一版这里按当前句算，S2 实测同一屏两处显示 50% vs 43%，看着像 bug 实则基准不同。
+    var anchor = state.pos.cueIndex;
+    if (pageCache && pageCache.pages[state.pageIndex]) anchor = pageCache.pages[state.pageIndex].s;
+    var ratio = core.readingRatio(cueCounts(book), state.pos.chapterIndex, anchor);
     els.ratio.textContent = Math.round(ratio * 100) + '%';
     els['progress-fill'].style.width = (ratio * 100).toFixed(2) + '%';
   }
@@ -870,6 +888,7 @@
       engine.stop();
       els.workbench.hidden = true; els['empty-state'].hidden = false;
       showTitlePage(false);              // 复位扉页对各区块的遮挡，下次进书由 openBook 重新决定
+      showSheet(false);
       setChrome(false);                  // 退出阅读态：书架侧栏回来
       pageCache = null;
       state.bookId = null; renderShelf();
@@ -882,7 +901,24 @@
     els['btn-toc'].addEventListener('click', function () {
       if (!currentBook()) return;
       engine.stop();
+      showSheet(false);
       showTitlePage(true);
+    });
+
+    // 阅读设置面板：Aa 开关；点遮罩收起
+    els['btn-settings'].addEventListener('click', function () {
+      showSheet(els['read-sheet'].hidden);
+    });
+    els['sheet-mask'].addEventListener('click', function () { showSheet(false); });
+    els['btn-font-serif'].addEventListener('click', function () {
+      state.settings.fontFamily = 'serif'; applySettings();
+    });
+    els['btn-font-sans'].addEventListener('click', function () {
+      state.settings.fontFamily = 'sans'; applySettings();
+    });
+    els['bright-range'].addEventListener('input', function () {
+      state.settings.bright = Number(this.value) || 100;
+      applySettings();
     });
     els['btn-tp-continue'].addEventListener('click', function () {
       var book = currentBook();
@@ -910,6 +946,12 @@
 
     els.reader.addEventListener('click', function (ev) {
       if (Date.now() - lastSwipeAt < 600) return;   // 刚滑过页：忽略浏览器补发的 click
+      // 页脚章名 = 扉页/目录入口（章节直达，不用先出面板再找按钮）
+      if (ev.target.closest && ev.target.closest('.pf-ch')) {
+        engine.stop();
+        showTitlePage(true);
+        return;
+      }
       var el = ev.target.closest ? ev.target.closest('.cue') : null;
       if (el) {
         var idx = Number(el.getAttribute('data-i'));
@@ -1048,8 +1090,12 @@
     els['listen-panel'].hidden = mode !== 'listen';
     state.follow = mode === 'listen';
     if (mode === 'listen') highlight(state.pos.cueIndex, true);
-    // 播放条出现/收起会改变书页高度：按新页高重装箱，锚点仍是当前句
-    if (state.bookId && pageCache && els['title-page'].hidden) renderChapter();
+    // 播放条出现/收起会改变书页高度：页高进了 pageKey 指纹，
+    // 指纹变了才重装箱，锚点仍是当前句
+    if (state.bookId && pageCache && els['title-page'].hidden &&
+        pageCache.key !== pageKey(currentBook(), state.pos.chapterIndex)) {
+      renderChapter();
+    }
   }
 
   function bumpFont(delta) {
@@ -1059,15 +1105,27 @@
 
   function applySettings() {
     doc.documentElement.setAttribute('data-theme', state.settings.theme);
+    doc.documentElement.setAttribute('data-font', state.settings.fontFamily === 'sans' ? 'sans' : 'serif');
     els.reader.style.fontSize = FONT_STEPS[state.settings.fontStep] + 'px';
     els['btn-theme'].textContent = ({ paper: '纸白', sepia: '护眼', dark: '夜间' })[state.settings.theme];
     els.rate.value = String(state.settings.rate);
     els['auto-next'].checked = !!state.settings.autoNext;
     if (engine) engine.setRate(state.settings.rate);
+    // 字体二选一的选中态
+    els['btn-font-serif'].classList.toggle('on', state.settings.fontFamily !== 'sans');
+    els['btn-font-sans'].classList.toggle('on', state.settings.fontFamily === 'sans');
+    // 亮度：100=不压暗；往下每少 1 点，遮罩加深 0.6%（最深 36%，再黑就白字也看不清了）
+    var bright = Math.min(100, Math.max(40, Number(state.settings.bright) || 100));
+    state.settings.bright = bright;
+    els['bright-range'].value = String(bright);
+    els['dim-overlay'].style.opacity = String(Math.round((100 - bright) * 0.006 * 100) / 100);
     saveSettings();
-    // 字号变了每一页装得下的句子就变了：正在读的话重装箱，
-    // 锚点仍是当前句（renderChapter 内部按句位找回所在页）
-    if (state.bookId && pageCache && els['title-page'] && els['title-page'].hidden) renderChapter();
+    // 只有「换行」的项变了才值得重新装箱（字号/字体/主题/页高）。
+    // pageKey 就是这些项的指纹；亮度只盖遮罩，不改变装多少字。
+    if (state.bookId && pageCache && els['title-page'] && els['title-page'].hidden &&
+        pageCache.key !== pageKey(currentBook(), state.pos.chapterIndex)) {
+      renderChapter();
+    }
   }
 
   /* ================= 导入 ================= */
