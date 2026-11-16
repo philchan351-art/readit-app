@@ -596,6 +596,19 @@
     return GOOD_VOICE_RE.test(String((v && v.name) || ''));
   }
 
+  /**
+   * 句位 → 页码。pages 是 [{s, e}] 升序不重叠的区间表（app.js 分页装箱的产物）。
+   * 页码纯由数据决定，DOM 无关——所以能在这里单测，翻页正确性不依赖浏览器。
+   */
+  function findPage(pages, cueIndex) {
+    if (!pages || !pages.length) return 0;
+    for (var i = 0; i < pages.length; i++) {
+      if (cueIndex >= pages[i].s && cueIndex <= pages[i].e) return i;
+    }
+    if (cueIndex < pages[0].s) return 0;
+    return pages.length - 1;
+  }
+
   var api = {
     groupPdfItems: groupPdfItems,
     voiceScore: voiceScore,
@@ -626,6 +639,7 @@
     splitChapters: splitChapters,
     breakByLength: breakByLength,
     readingRatio: readingRatio,
+    findPage: findPage,
     mergeProgress: mergeProgress,
     makeProgress: makeProgress,
     formatDuration: formatDuration,

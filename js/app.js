@@ -20,8 +20,8 @@
   var FONT_STEPS = [15, 16, 17, 18, 20, 22, 24, 26];
 
   var els = {};
-  var autoScrollUntil = 0;
-  var scrollSaveTimer = 0;       // 滚动→句位反推的节流计时器（一次滚动停歇只存一次）
+  var pageCache = null;          // 当前章的装箱结果 { pages:[{s,e}], paras:[[..]], key }
+  var lastSwipeAt = 0;           // 滑动翻页后抑制浏览器补发的 click，防止双翻
   var state = {
     books: [],
     progress: {},
@@ -29,6 +29,7 @@
                 hiddenSamples: [], lastBookId: '' },
     bookId: null,
     pos: { chapterIndex: 0, cueIndex: 0 },
+    pageIndex: 0,
     mode: 'read',
     follow: true,
     sleepAt: 0,
@@ -44,7 +45,10 @@
      'listen-panel', 'btn-play', 'btn-prev-cue', 'btn-next-cue', 'btn-stop', 'rate', 'rate-val',
      'voice-select', 'engine-select', 'sleep-select', 'sleep-text', 'auto-next', 'status-text', 'tts-warn', 'toast',
      'btn-font-minus', 'btn-font-plus', 'btn-theme',
-      'btn-export', 'btn-import-backup', 'backup-input', 'btn-show-samples'].forEach(function (id) {
+       'btn-export', 'btn-import-backup', 'backup-input', 'btn-show-samples',
+       'topbar', 'chapter-bar',
+       'title-page', 'tp-cover', 'tp-title', 'tp-author', 'tp-line', 'tp-toc',
+       'btn-tp-continue', 'btn-tp-restart', 'btn-tp-back'].forEach(function (id) {
       els[id] = doc.getElementById(id);
     });
 
@@ -328,6 +332,7 @@
     state.pos = p ? { chapterIndex: p.chapterIndex, cueIndex: p.cueIndex }
                   : { chapterIndex: 0, cueIndex: 0 };
     state.follow = true;
+    pageCache = null;
 
     els['empty-state'].hidden = true;
     els.workbench.hidden = false;
@@ -335,10 +340,74 @@
     els['book-sub'].textContent = book.author + ' · ' + book.intro;
 
     renderChapterSelect(book);
-    renderChapter();
     renderShelf();
-    // 记住这台设备最后在看的书：下次冷启动直接进书（openBook 会跳到已存句位）
+    // 选书后先落扉页（书名/读到哪/目录/一键继续），不再一上来糊一整屏从头到尾的正文
+    renderTitlePage(book);
+    // 记住这台设备最后在看的书：下次冷启动直接进扉页，一键回到上次那句
     if (state.settings.lastBookId !== id) { state.settings.lastBookId = id; saveSettings(); }
+  }
+
+  /* ================= 扉页 ================= */
+
+  function renderTitlePage(book) {
+    var p = state.progress[book.id];
+    var cov = els['tp-cover'];
+    cov.style.background = 'linear-gradient(150deg,' +
+      ((book.cover && book.cover.from) || '#2f6f5f') + ',' +
+      ((book.cover && book.cover.to) || '#6aa88f') + ')';
+    els['tp-title'].textContent = book.title;
+    els['tp-author'].textContent = book.author + ' · 共 ' + book.chapters.length + ' 章';
+
+    if (p) {
+      var ratio = Math.round(core.readingRatio(cueCounts(book), p.chapterIndex, p.cueIndex) * 100);
+      var ch = book.chapters[p.chapterIndex];
+      els['tp-line'].textContent = '上次阅读 ' + ratio + '%' + (ch ? ' · ' + ch.title : '');
+      els['btn-tp-continue'].textContent = ratio >= 99 ? '已读完 · 从头重读' : '继续阅读';
+    } else {
+      els['tp-line'].textContent = '还没开始 · 直接开读或从目录挑一章';
+      els['btn-tp-continue'].textContent = '开始阅读';
+    }
+
+    var toc = els['tp-toc'];
+    toc.innerHTML = '';
+    book.chapters.forEach(function (ch, i) {
+      var li = doc.createElement('li');
+      var b = doc.createElement('b');
+      b.textContent = ch.title;
+      li.appendChild(b);
+      if (p && i === p.chapterIndex) {
+        li.className = 'cur';
+        var em = doc.createElement('em');
+        em.textContent = '上次在这';
+        li.appendChild(em);
+      }
+      li.addEventListener('click', function () {
+        state.pos = { chapterIndex: i, cueIndex: 0 };
+        saveProgress('read');
+        startReading(false);
+      });
+      toc.appendChild(li);
+    });
+    showTitlePage(true);
+  }
+
+  function showTitlePage(on) {
+    els['title-page'].hidden = !on;
+    els.topbar.hidden = on;
+    els['chapter-bar'].hidden = on;
+    els.reader.hidden = on;
+    els['listen-panel'].hidden = on || state.mode !== 'listen';
+  }
+
+  /** 从扉页进入正文。fromStart=true 表示「从头开始」 */
+  function startReading(fromStart) {
+    if (fromStart) {
+      state.pos = { chapterIndex: 0, cueIndex: 0 };
+      saveProgress('read');
+    }
+    showTitlePage(false);
+    renderChapter();
+    updateStatus();
   }
 
   function renderChapterSelect(book) {
@@ -352,39 +421,177 @@
     sel.value = String(state.pos.chapterIndex);
   }
 
+  /* ================= 分页排版引擎 =================
+     一章按「句」装箱成整屏书页：往真实页面容器里一句句加，
+     超出页高就把这句退回下一页。测量用的就是真实渲染样式，
+     所以永远不会出现「算出来能放下、实际溢出」。页码 → 首句句号，
+     进度依旧是句级（state.pos.cueIndex），看书/听书共用不受影响。 */
+
+  /** 章内句子按源文本的换行归段：[[0,1,2],[3,4],...] */
+  function chapterParas(book, ci) {
+    var ch = book.chapters[ci];
+    var cues = cuesOf(book, ci);
+    var paras = [];
+    var cur = [];
+    var cursor = 0;
+    for (var i = 0; i < cues.length; i++) {
+      cur.push(i);
+      cursor = cues[i].end;
+      var nextBefore = (i + 1 < cues.length) ? ch.text.slice(cursor, cues[i + 1].start) : '';
+      if (/[\n\r]/.test(nextBefore) || /[\n\r]\s*$/.test(cues[i].text) || i === cues.length - 1) {
+        paras.push(cur);
+        cur = [];
+      }
+    }
+    if (cur.length) paras.push(cur);
+    return paras;
+  }
+
+  function pageKey(book, ci) {
+    var box = els.reader.querySelector('.page-text');
+    var w = box ? box.clientWidth : 0;
+    var h = box ? box.clientHeight : 0;
+    return [book.id, ci, state.settings.fontStep, w, h, state.settings.theme].join('|');
+  }
+
+  var PAGE_END_TEXT = '本章完 · 再点一下右边继续 →';
+
+  /**
+   * 把一章装进页面盒，返回 [{s,e}] 页区间。
+   * 逐页测量：每页装箱前把盒子清回「占位标题」基线再一句句加。
+   * 两个真机实测换来的规矩，别再改回去：
+   *  ① 占位标题恒在——渲染时第 1 页有真标题，测量必须按同一高度扣；
+   *  ② 「本章完」占位块恒挂在测量尾部——它只在末章渲染，但若不按它预留，
+   *     末句的段末 margin 会被 overflow:hidden 吞进父元素（实测装箱峰值 621、
+   *     渲染真实 644），页尾就裁字。宁可每页少装一行，绝不少一行读不到。
+   */
+  function packPages(book, ci) {
+    var cues = cuesOf(book, ci);
+    if (!cues.length) return [{ s: 0, e: 0 }];
+    var box = els.reader.querySelector('.page-text');
+    var base = '<h2 class="page-title title-ghost" aria-hidden="true">' +
+               esc(book.chapters[ci].title) + '</h2>';
+    var flat = [];
+    chapterParas(book, ci).forEach(function (pr) {
+      pr.forEach(function (i) { flat.push(i); });
+    });
+
+    var pages = [];
+    var f = 0;
+    while (f < flat.length) {
+      box.innerHTML = base;
+      var start = flat[f];
+      var lastFit = start - 1;
+      var curP = null;
+      while (f < flat.length) {
+        var i = flat[f];
+        if (!curP) { curP = doc.createElement('p'); box.appendChild(curP); }
+        var sp = doc.createElement('span');
+        sp.className = 'cue';
+        sp.setAttribute('data-i', String(i));
+        sp.textContent = cues[i].text.trim();
+        curP.appendChild(sp);
+        var pe = doc.createElement('div');
+        pe.className = 'page-end';
+        pe.textContent = PAGE_END_TEXT;
+        box.appendChild(pe);                       // 占位块永远在盒子最尾
+        if (i > start && box.scrollHeight > box.clientHeight + 1) {
+          curP.removeChild(sp);
+          if (!curP.childNodes.length) curP.parentNode.removeChild(curP);
+          box.removeChild(pe);
+          curP = null;
+          break;                                   // 本页装满；i 留给下一页（f 不动）
+        }
+        lastFit = i;
+        f++;
+      }
+      pages.push({ s: start, e: lastFit });
+      // 防死锁：一页连一句加占位都放不下时，也把它记为一页并前进，绝不原地打转
+      if (lastFit < start) { lastFit = start; f = Math.max(f, flat.indexOf(start) + 1); }
+    }
+    return pages;
+  }
+
   function renderChapter() {
     var book = currentBook();
     if (!book) return;
     var ci = state.pos.chapterIndex;
-    var ch = book.chapters[ci];
-    var cues = cuesOf(book, ci);
-    var reader = els.reader;
 
-    var html = ['<div class="reader-inner">', '<h2 class="chapter-title">', esc(ch.title), '</h2>'];
-    var text = ch.text;
-    var cursor = 0;
-    var open = false;
-
-    function closePara() { if (open) { html.push('</p>'); open = false; } }
-
-    for (var i = 0; i < cues.length; i++) {
-      var cue = cues[i];
-      var before = text.slice(cursor, cue.start);
-      if (/\n/.test(before)) { closePara(); }
-      if (!open) { html.push('<p>'); open = true; }
-      html.push('<span class="cue" data-i="', String(i), '">', esc(cue.text.trim()), '</span>');
-      if (/\n$/.test(cue.text)) closePara();
-      cursor = cue.end;
-    }
-    closePara();
-    html.push('<div class="reader-foot">',
-              ci < book.chapters.length - 1 ? '本章完 · 下一章 →' : '全书完',
-              '</div></div>');
-
-    reader.innerHTML = html.join('');
+    els.reader.innerHTML =
+      '<div class="page-box"><div class="page-text"></div>' +
+      '<footer class="page-foot"><span class="pf-ch"></span><span class="pf-page"></span></footer></div>';
     els['chapter-select'].value = String(ci);
-    highlight(state.pos.cueIndex, true);
+
+    pageCache = { pages: packPages(book, ci), paras: chapterParas(book, ci), key: pageKey(book, ci) };
+    showPage(core.findPage(pageCache.pages, state.pos.cueIndex), false);
+    highlight(state.pos.cueIndex, false);
     updateRatio();
+  }
+
+  /** 渲染第 pi 页。remember=true 时把进度记到这一页的第一句（翻页即「读到这」） */
+  function showPage(pi, remember) {
+    var book = currentBook();
+    if (!book || !pageCache) return;
+    var ci = state.pos.chapterIndex;
+    var pages = pageCache.pages;
+    var cues = cuesOf(book, ci);
+    pi = core.clamp(pi, 0, pages.length - 1);
+    state.pageIndex = pi;
+    var pg = pages[pi];
+    if (remember) {
+      state.pos.cueIndex = pg.s;
+      saveProgress('read');
+      updateRatio();
+      updateStatus();
+    }
+
+    var html = [];
+    if (pi === 0) html.push('<h2 class="page-title">', esc(book.chapters[ci].title), '</h2>');
+    pageCache.paras.forEach(function (pr) {
+      var s = Math.max(pr[0], pg.s);
+      var e = Math.min(pr[pr.length - 1], pg.e);
+      if (s > e) return;
+      html.push('<p>');
+      for (var i = s; i <= e && i < cues.length; i++) {
+        html.push('<span class="cue" data-i="', String(i), '">', esc(cues[i].text.trim()), '</span>');
+      }
+      html.push('</p>');
+    });
+    if (pi === pages.length - 1) {
+      html.push('<div class="page-end">',
+                ci < book.chapters.length - 1 ? PAGE_END_TEXT : '全书完',
+                '</div>');
+    }
+    var box = els.reader.querySelector('.page-text');
+    box.innerHTML = html.join('');
+    var foot = els.reader.querySelector('.page-foot');
+    foot.querySelector('.pf-ch').textContent = book.chapters[ci].title;
+    foot.querySelector('.pf-page').textContent =
+      (pi + 1) + ' / ' + pages.length + ' 页 · ' +
+      Math.round(core.readingRatio(cueCounts(book), ci, pg.s) * 100) + '%';
+  }
+
+  /** 翻页。dir=+1 下一页 / -1 上一页；页界外的翻页自然衔接下一章/上一章 */
+  function turnPage(dir) {
+    var book = currentBook();
+    if (!book || !pageCache || !els['title-page'].hidden) return;
+    var np = state.pageIndex + dir;
+    if (np < 0) {
+      if (state.pos.chapterIndex > 0) {
+        var prevCi = state.pos.chapterIndex - 1;
+        gotoChapter(prevCi, Math.max(0, cuesOf(book, prevCi).length - 1));
+      }
+      return;
+    }
+    if (np >= pageCache.pages.length) {
+      if (state.pos.chapterIndex < book.chapters.length - 1) {
+        gotoChapter(state.pos.chapterIndex + 1, 0);
+      } else {
+        toast('已经读完全书了');
+      }
+      return;
+    }
+    showPage(np, true);
   }
 
   function esc(s) {
@@ -392,23 +599,17 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  /* ================= 定位与高亮 ================= */
+  /* ================= 定位与高亮（分页版） =================
+     DOM 里只有当前页的句子，高亮按 data-i 匹配；
+     要找的句子不在本页（朗读走到页尾、点句跳读、恢复进度）就先翻到那页。 */
 
-  function cueEls() { return els.reader.querySelectorAll('.cue'); }
-
-  function highlight(cueIndex, scroll) {
-    var list = cueEls();
+  function highlight(cueIndex) {
+    if (!currentBook() || !pageCache) return;
+    var pi = core.findPage(pageCache.pages, cueIndex);
+    if (pi !== state.pageIndex) showPage(pi, false);
+    var list = els.reader.querySelectorAll('.page-text .cue');
     for (var i = 0; i < list.length; i++) {
-      list[i].classList.toggle('active', i === cueIndex);
-    }
-    var el = list[cueIndex];
-    if (el && scroll !== false && (state.mode === 'listen' || state.follow)) {
-      var box = els.reader.getBoundingClientRect();
-      var r = el.getBoundingClientRect();
-      if (r.top < box.top + 40 || r.bottom > box.bottom - 80) {
-        autoScrollUntil = Date.now() + 900;   // 平滑滚动期间的 scroll 事件不取消跟随
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      }
+      list[i].classList.toggle('active', Number(list[i].getAttribute('data-i')) === cueIndex);
     }
   }
 
@@ -438,33 +639,6 @@
   function persistProgress(bookId) {
     if (!store || !state.progress[bookId]) return;
     store.saveProgress(state.progress[bookId]).catch(function () {});
-  }
-
-  /* ---- 「看到第几页」的反推：以视口中线找当前句，滚动停歇后节流保存 ----
-     以前的保存点只有点句/切章/朗读，纯滚动看书永远不落进度——
-     用户反馈的「书看过没有记忆」就是这个洞。 */
-  function cueIndexAtView() {
-    var list = cueEls();
-    if (!list.length) return -1;
-    var box = els.reader.getBoundingClientRect();
-    var lineY = box.top + box.height * 0.5;   // 中线的句就是正在读的句
-    var idx = 0;
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].getBoundingClientRect().top <= lineY) idx = i; else break;
-    }
-    return idx;
-  }
-
-  function rememberScrollPos(force) {
-    if (!state.bookId || els.workbench.hidden) return;
-    var idx = cueIndexAtView();
-    if (idx < 0) return;
-    // 变化不足 2 句不存：重新打开时朗读定位会把保存句居中，
-    // 这种微移动也存的话，位置会每次重开慢慢「漂移」
-    if (!force && Math.abs(idx - state.pos.cueIndex) < 2) return;
-    state.pos.cueIndex = idx;
-    saveProgress('read');
-    updateRatio();
   }
 
   /** 清空进度：必须真的删库，只清内存对象会在下次启动时被旧记录复活 */
@@ -687,12 +861,24 @@
     els['btn-open-sample'].addEventListener('click', function () { openBook(state.books[0].id); });
     els['btn-back'].addEventListener('click', function () {
       engine.stop();
-      rememberScrollPos(true);           // 离开这本书前把最后位置存掉
       els.workbench.hidden = true; els['empty-state'].hidden = false;
+      showTitlePage(false);              // 复位扉页对各区块的遮挡，下次进书由 openBook 重新决定
+      pageCache = null;
       state.bookId = null; renderShelf();
       // 明确回到书架：下次启动不再自动进书，这是用户自己的选择
       if (state.settings.lastBookId) { state.settings.lastBookId = ''; saveSettings(); }
     });
+
+    // 扉页三件套
+    els['btn-tp-continue'].addEventListener('click', function () {
+      var book = currentBook();
+      if (!book) return;
+      var p = state.progress[book.id];
+      var done = p && core.readingRatio(cueCounts(book), p.chapterIndex, p.cueIndex) >= 0.99;
+      startReading(!!done);
+    });
+    els['btn-tp-restart'].addEventListener('click', function () { startReading(true); });
+    els['btn-tp-back'].addEventListener('click', function () { els['btn-back'].click(); });
 
     els['btn-import'].addEventListener('click', function () { els['file-input'].click(); });
     els['file-input'].addEventListener('change', onImport);
@@ -709,14 +895,39 @@
     els['backup-input'].addEventListener('change', onRestoreBackup);
 
     els.reader.addEventListener('click', function (ev) {
+      if (Date.now() - lastSwipeAt < 600) return;   // 刚滑过页：忽略浏览器补发的 click
       var el = ev.target.closest ? ev.target.closest('.cue') : null;
-      if (!el) return;
-      var idx = Number(el.getAttribute('data-i'));
-      var wasPlaying = engine.state.playing && !engine.state.paused;
-      setPosition(state.pos.chapterIndex, idx, { mode: 'read', scroll: false });
-      if (wasPlaying) engine.jumpTo(state.pos.chapterIndex, idx);
-      else toast('已把续读位置设在这一句');
+      if (el) {
+        var idx = Number(el.getAttribute('data-i'));
+        var wasPlaying = engine.state.playing && !engine.state.paused;
+        setPosition(state.pos.chapterIndex, idx, { mode: 'read', scroll: false });
+        if (wasPlaying) engine.jumpTo(state.pos.chapterIndex, idx);
+        else toast('已把续读位置设在这一句');
+        return;
+      }
+      // 空白处：点屏幕左/右约四分之一 = 上一页/下一页（书页直觉）
+      var box = els.reader.getBoundingClientRect();
+      var x = (ev.clientX - box.left) / Math.max(1, box.width);
+      if (x < 0.26) turnPage(-1);
+      else if (x > 0.74) turnPage(1);
     });
+
+    // 手指横扫翻页（手机上的主流手势）；轻点不算滑动
+    var touchX = 0, touchY = 0;
+    els.reader.addEventListener('touchstart', function (ev) {
+      if (ev.touches.length !== 1) { touchX = 0; return; }
+      touchX = ev.touches[0].clientX; touchY = ev.touches[0].clientY;
+    }, { passive: true });
+    els.reader.addEventListener('touchend', function (ev) {
+      if (!touchX || !ev.changedTouches || !ev.changedTouches.length) return;
+      var t = ev.changedTouches[0];
+      var dx = t.clientX - touchX, dy = t.clientY - touchY;
+      touchX = 0;
+      if (Math.abs(dx) > 46 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        lastSwipeAt = Date.now();
+        turnPage(dx < 0 ? 1 : -1);
+      }
+    }, { passive: true });
 
     els['btn-prev-chapter'].addEventListener('click', function () { gotoChapter(state.pos.chapterIndex - 1); });
     els['btn-next-chapter'].addEventListener('click', function () { gotoChapter(state.pos.chapterIndex + 1); });
@@ -767,25 +978,19 @@
       if (e.code === 'Space') { e.preventDefault(); els['btn-play'].click(); }
       if (e.code === 'ArrowLeft') stepCue(-1);
       if (e.code === 'ArrowRight') stepCue(1);
+      if (e.code === 'PageUp') { e.preventDefault(); turnPage(-1); }
+      if (e.code === 'PageDown') { e.preventDefault(); turnPage(1); }
     });
 
-    // 用户手动滚动后停止自动跟随，避免和朗读抢位置；朗读触发的自动滚动不算
-    els.reader.addEventListener('scroll', function () {
-      if (Date.now() < autoScrollUntil) return;
-      state.follow = false;
-      // 朗读播放中不靠滚动反推位置，避免和用户抢
-      if (engine && engine.state && engine.state.playing && !engine.state.paused) return;
-      // 节流：滚动停歇 400ms 后把「中线句」写成进度，这就是「看到第几页」的记忆
-      if (scrollSaveTimer) return;
-      scrollSaveTimer = global.setTimeout(function () {
-        scrollSaveTimer = 0;
-        rememberScrollPos(false);
-      }, 400);
-    });
-    // 离开页面前把当前位置落库：移动端切后台/关标签时 scroll 节流可能还没触发
-    global.addEventListener('pagehide', function () { rememberScrollPos(true); });
-    doc.addEventListener('visibilitychange', function () {
-      if (doc.hidden) rememberScrollPos(true);
+    // 旋转屏幕 / 窗口尺寸变化：页面盒子的物理高度变了，装箱结果作废，就地重排。
+    // 位置锚在句级，重排后依旧落在正在读的这句附近。
+    var resizeTimer = 0;
+    global.addEventListener('resize', function () {
+      if (resizeTimer) global.clearTimeout(resizeTimer);
+      resizeTimer = global.setTimeout(function () {
+        resizeTimer = 0;
+        if (state.bookId && pageCache && els['title-page'].hidden) renderChapter();
+      }, 350);
     });
   }
 
@@ -844,6 +1049,9 @@
     els['auto-next'].checked = !!state.settings.autoNext;
     if (engine) engine.setRate(state.settings.rate);
     saveSettings();
+    // 字号变了每一页装得下的句子就变了：正在读的话重装箱，
+    // 锚点仍是当前句（renderChapter 内部按句位找回所在页）
+    if (state.bookId && pageCache && els['title-page'] && els['title-page'].hidden) renderChapter();
   }
 
   /* ================= 导入 ================= */

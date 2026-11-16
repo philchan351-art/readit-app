@@ -12,7 +12,7 @@
 <meta name="theme-color" content="#0E1A2C">
 <!-- ?v= 和下面 JS 一个道理：Chrome 会拿 CSS 的磁盘缓存，改完样式不加版本号，
      你会看到"改了没生效"。改 css 就把 v 往上加。 -->
-<link rel="stylesheet" href="css/app.css?v=13">
+<link rel="stylesheet" href="css/app.css?v=15">
 </head>
 <body>
 <div id="app">
@@ -51,7 +51,25 @@
 
     <section id="workbench" class="workbench" hidden>
 
-      <div class="topbar">
+      <!-- 扉页：选一本书后先落到这里（书名/作者/读到哪了/目录/一键继续），
+           不再一上来就糊一整屏从头到尾的滚动正文。JS 控制它的显隐。 -->
+      <section id="title-page" class="title-page" hidden>
+        <div class="tp-card">
+          <button id="btn-tp-back" class="btn icon tp-back" title="返回书架">‹</button>
+          <div id="tp-cover" class="tp-cover"></div>
+          <h2 id="tp-title" class="tp-title"></h2>
+          <p id="tp-author" class="tp-author"></p>
+          <p id="tp-line" class="tp-line"></p>
+          <div class="tp-actions">
+            <button id="btn-tp-continue" class="btn play">继续阅读</button>
+            <button id="btn-tp-restart" class="btn">从头开始</button>
+          </div>
+          <div class="tp-toc-head">目录</div>
+          <ol id="tp-toc" class="tp-toc"></ol>
+        </div>
+      </section>
+
+      <div id="topbar" class="topbar">
         <button id="btn-back" class="btn icon" title="返回书架">‹</button>
         <div class="title-wrap">
           <h1 id="book-title"></h1>
@@ -68,7 +86,7 @@
         </div>
       </div>
 
-      <div class="chapter-bar">
+      <div id="chapter-bar" class="chapter-bar">
         <button id="btn-prev-chapter" class="btn small">上一章</button>
         <select id="chapter-select" class="chapter-select" aria-label="选择章节"></select>
         <button id="btn-next-chapter" class="btn small">下一章</button>
@@ -141,12 +159,12 @@
 <!-- ?v= 用来击穿缓存：实测过 Chrome 会拿旧 core.js 的磁盘缓存跑，
      差点把"修复没生效"当成结论。改完代码把 v 一起加 1。 -->
 <script src="js/diag.js?v=9"></script><!-- 放最前面：要能抓到后面各脚本的加载错误 -->
-<script src="js/core.js?v=9"></script>
+<script src="js/core.js?v=10"></script>
 <script src="js/parse.js?v=9"></script>
 <script src="js/store.js?v=9"></script>
 <script src="js/tts.js?v=9"></script>
 <script src="js/tts-cloud.js?v=9"></script>
 <script src="js/books-data.js?v=9"></script>
-<script src="js/app.js?v=10"></script>
+<script src="js/app.js?v=12"></script>
 </body>
 </html>
