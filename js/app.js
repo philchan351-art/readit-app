@@ -21,11 +21,12 @@
 
   var els = {};
   var autoScrollUntil = 0;
+  var scrollSaveTimer = 0;       // 滚动→句位反推的节流计时器（一次滚动停歇只存一次）
   var state = {
     books: [],
     progress: {},
     settings: { theme: 'paper', fontStep: 2, rate: 1, voiceId: '', autoNext: true, engine: 'system',
-                hiddenSamples: [] },
+                hiddenSamples: [], lastBookId: '' },
     bookId: null,
     pos: { chapterIndex: 0, cueIndex: 0 },
     mode: 'read',
@@ -72,6 +73,11 @@
       } else if (store.backend() !== 'indexeddb') {
         warn('本机存储回落到「' + store.backend() + '」模式（IndexedDB 不可用，常见于无痕窗口或 file:// 限制）。' +
              '书架与进度仍能保存，但容量较小；建议用正常窗口的桌面 Edge 打开。');
+      }
+      // 「在上次基础上继续」：有上次在看的书就自动进入该书、跳到已存句位。
+      // lastBookId 是本机设置：明确点「返回书架」会清掉，下次启动就停在书架。
+      if (state.settings.lastBookId && bookById(state.settings.lastBookId)) {
+        openBook(state.settings.lastBookId);
       }
       // 上次在带服务器的地址上选了云端音色，这次改用纯静态地址打开也要自洽，不能闷声。
       // 这里只在「确定没有中转」时才动设置，网络抖一下就把人切走是更糟的体验。
@@ -331,6 +337,8 @@
     renderChapterSelect(book);
     renderChapter();
     renderShelf();
+    // 记住这台设备最后在看的书：下次冷启动直接进书（openBook 会跳到已存句位）
+    if (state.settings.lastBookId !== id) { state.settings.lastBookId = id; saveSettings(); }
   }
 
   function renderChapterSelect(book) {
@@ -430,6 +438,33 @@
   function persistProgress(bookId) {
     if (!store || !state.progress[bookId]) return;
     store.saveProgress(state.progress[bookId]).catch(function () {});
+  }
+
+  /* ---- 「看到第几页」的反推：以视口中线找当前句，滚动停歇后节流保存 ----
+     以前的保存点只有点句/切章/朗读，纯滚动看书永远不落进度——
+     用户反馈的「书看过没有记忆」就是这个洞。 */
+  function cueIndexAtView() {
+    var list = cueEls();
+    if (!list.length) return -1;
+    var box = els.reader.getBoundingClientRect();
+    var lineY = box.top + box.height * 0.5;   // 中线的句就是正在读的句
+    var idx = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].getBoundingClientRect().top <= lineY) idx = i; else break;
+    }
+    return idx;
+  }
+
+  function rememberScrollPos(force) {
+    if (!state.bookId || els.workbench.hidden) return;
+    var idx = cueIndexAtView();
+    if (idx < 0) return;
+    // 变化不足 2 句不存：重新打开时朗读定位会把保存句居中，
+    // 这种微移动也存的话，位置会每次重开慢慢「漂移」
+    if (!force && Math.abs(idx - state.pos.cueIndex) < 2) return;
+    state.pos.cueIndex = idx;
+    saveProgress('read');
+    updateRatio();
   }
 
   /** 清空进度：必须真的删库，只清内存对象会在下次启动时被旧记录复活 */
@@ -651,8 +686,12 @@
   function bindEvents() {
     els['btn-open-sample'].addEventListener('click', function () { openBook(state.books[0].id); });
     els['btn-back'].addEventListener('click', function () {
-      engine.stop(); els.workbench.hidden = true; els['empty-state'].hidden = false;
+      engine.stop();
+      rememberScrollPos(true);           // 离开这本书前把最后位置存掉
+      els.workbench.hidden = true; els['empty-state'].hidden = false;
       state.bookId = null; renderShelf();
+      // 明确回到书架：下次启动不再自动进书，这是用户自己的选择
+      if (state.settings.lastBookId) { state.settings.lastBookId = ''; saveSettings(); }
     });
 
     els['btn-import'].addEventListener('click', function () { els['file-input'].click(); });
@@ -734,6 +773,19 @@
     els.reader.addEventListener('scroll', function () {
       if (Date.now() < autoScrollUntil) return;
       state.follow = false;
+      // 朗读播放中不靠滚动反推位置，避免和用户抢
+      if (engine && engine.state && engine.state.playing && !engine.state.paused) return;
+      // 节流：滚动停歇 400ms 后把「中线句」写成进度，这就是「看到第几页」的记忆
+      if (scrollSaveTimer) return;
+      scrollSaveTimer = global.setTimeout(function () {
+        scrollSaveTimer = 0;
+        rememberScrollPos(false);
+      }, 400);
+    });
+    // 离开页面前把当前位置落库：移动端切后台/关标签时 scroll 节流可能还没触发
+    global.addEventListener('pagehide', function () { rememberScrollPos(true); });
+    doc.addEventListener('visibilitychange', function () {
+      if (doc.hidden) rememberScrollPos(true);
     });
   }
 
