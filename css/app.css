@@ -716,4 +716,12 @@ html[data-font='sans'] .page-text {
 .pf-ch { cursor: pointer; color: var(--accent-ink); }
 .pf-ch::after { content: " ⌄"; font-weight: 700; }
 
+/* 后台全书装箱的隐藏测量盒：类名带 page-text，字体/段距/占位规则全部生效，
+   尺寸由 JS 显式对齐真页；visibility 不占交互，pointer-events 再兜一层 */
+.page-measure {
+  position: absolute; z-index: -1; left: 0; top: 0;
+  visibility: hidden; pointer-events: none;
+  animation: none;
+}
+
 body.reading .topbar { z-index: 10; }

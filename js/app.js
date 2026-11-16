@@ -22,6 +22,8 @@
   var els = {};
   var pageCache = null;          // 当前章的装箱结果 { pages:[{s,e}], paras:[[..]], key }
   var lastSwipeAt = 0;           // 滑动翻页后抑制浏览器补发的 click，防止双翻
+  var bookPacks = null;          // 全书页码进度 { fp, counts:[null|章页数] }，指纹变了整体作废
+  var packTimer = 0;             // 后台逐章装箱的节流计时器
   var state = {
     books: [],
     progress: {},
@@ -481,10 +483,10 @@
    *     末句的段末 margin 会被 overflow:hidden 吞进父元素（实测装箱峰值 621、
    *     渲染真实 644），页尾就裁字。宁可每页少装一行，绝不少一行读不到。
    */
-  function packPages(book, ci) {
+  /** box 由调用方给：前台用真实页面盒，后台全书装箱用隐藏测量盒（同尺寸同类名） */
+  function packPages(book, ci, box) {
     var cues = cuesOf(book, ci);
     if (!cues.length) return [{ s: 0, e: 0 }];
-    var box = els.reader.querySelector('.page-text');
     var base = '<h2 class="page-title title-ghost" aria-hidden="true">' +
                esc(book.chapters[ci].title) + '</h2>';
     // flat 带「新段落」标记：装箱必须和渲染同一套段落结构！
@@ -543,10 +545,14 @@
       '<footer class="page-foot"><span class="pf-ch"></span><span class="pf-page"></span></footer></div>';
     els['chapter-select'].value = String(ci);
 
-    pageCache = { pages: packPages(book, ci), paras: chapterParas(book, ci), key: pageKey(book, ci) };
+    var box = els.reader.querySelector('.page-box .page-text');
+    pageCache = { pages: packPages(book, ci, box), paras: chapterParas(book, ci), key: pageKey(book, ci) };
+    // 本章节目录入全书账本（指纹变了 tracker 自动重建），其余章节交给后台逐章装箱
+    ensurePackTracker(book).counts[ci] = pageCache.pages.length;
     showPage(core.findPage(pageCache.pages, state.pos.cueIndex), false);
     highlight(state.pos.cueIndex, false);
     updateRatio();
+    scheduleGlobalPack(book);
   }
 
   /** 渲染第 pi 页。remember=true 时把进度记到这一页的第一句（翻页即「读到这」） */
@@ -583,13 +589,26 @@
                 ci < book.chapters.length - 1 ? PAGE_END_TEXT : '全书完',
                 '</div>');
     }
-    var box = els.reader.querySelector('.page-text');
+    var box = els.reader.querySelector('.page-box .page-text');
     box.innerHTML = html.join('');
     var foot = els.reader.querySelector('.page-foot');
     foot.querySelector('.pf-ch').textContent = book.chapters[ci].title;
-    foot.querySelector('.pf-page').textContent =
-      (pi + 1) + ' / ' + pages.length + ' 页 · ' +
-      Math.round(core.readingRatio(cueCounts(book), ci, pg.s) * 100) + '%';
+    renderPageFoot(book);
+  }
+
+  /** 页脚右侧：全书连续页码（用户指定，不再显示章节内页码）。
+   *  data-ch 保留章内「x/y」供调试与测试脚本用，不显示给用户。 */
+  function renderPageFoot(book) {
+    if (!book || !pageCache) return;
+    var pf = els.reader.querySelector('.pf-page');
+    if (!pf) return;
+    var g = globalPageInfo(book);
+    var ci = state.pos.chapterIndex;
+    var pct = Math.round(core.readingRatio(cueCounts(book), ci,
+                                           pageCache.pages[state.pageIndex].s) * 100);
+    pf.textContent = g.current + ' / ' + (g.exact ? '' : '约') + g.total + ' 页 · ' + pct + '%';
+    pf.setAttribute('data-ch', (state.pageIndex + 1) + '/' + pageCache.pages.length);
+    pf.setAttribute('data-exact', g.exact ? '1' : '0');
   }
 
   /** 翻页。dir=+1 下一页 / -1 上一页；页界外的翻页自然衔接下一章/上一章 */
@@ -620,6 +639,99 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /* ================= 全书页码 =================
+     页脚要显示「第 x / 全书 y 页」，但页是打开哪章才装箱哪章的，
+     没读过的章不知道页数。策略：
+       ① 打开的章立即装箱 → 记入章节页数码表；
+       ② 没装的章先按已装章的「句/页密度」估算，页脚先出一个
+          带「约」字的可用数字（绝不静默展示假精确）；
+       ③ 后台按帧预算逐章真实装箱（隐藏测量盒，同字号同页高），
+          装完一章刷新一次页脚，全部装完去掉「约」——数字只会
+          越修越准，不会来回跳脸。
+     指纹（字号/字体/主题/页高/书）一变，账本整体作废重来。 */
+
+  function packFingerprint(book) {
+    var box = els.reader.querySelector('.page-box .page-text');
+    var w = box ? box.clientWidth : 0;
+    var h = box ? box.clientHeight : 0;
+    return [book.id, state.settings.fontStep, state.settings.fontFamily,
+            state.settings.theme, w, h].join('|');
+  }
+
+  function ensurePackTracker(book) {
+    var fp = packFingerprint(book);
+    if (!bookPacks || bookPacks.fp !== fp || bookPacks.counts.length !== book.chapters.length) {
+      bookPacks = { fp: fp, counts: [], done: false };
+      for (var i = 0; i < book.chapters.length; i++) bookPacks.counts.push(null);
+    }
+    return bookPacks;
+  }
+
+  /** 隐藏测量盒：类名与真页一致（字体/段距/占位规则全部生效），尺寸显式对齐真页 */
+  function measBox() {
+    var live = els.reader.querySelector('.page-box .page-text');
+    var m = els.reader.querySelector('.page-measure');
+    if (!m) {
+      m = doc.createElement('div');
+      m.className = 'page-text page-measure';
+      m.setAttribute('aria-hidden', 'true');
+      els.reader.appendChild(m);
+    }
+    m.style.width = live.clientWidth + 'px';
+    m.style.height = live.clientHeight + 'px';
+    return m;
+  }
+
+  function globalPageInfo(book) {
+    var tr = ensurePackTracker(book);
+    var countsArr = cueCounts(book);
+    var packedCues = 0, packedPages = 0, i;
+    for (i = 0; i < tr.counts.length; i++) {
+      if (tr.counts[i] != null) { packedCues += countsArr[i]; packedPages += tr.counts[i]; }
+    }
+    var density = packedPages > 0 ? packedCues / packedPages : 24;   // 每页大约几句
+    var total = 0, before = 0;
+    for (i = 0; i < tr.counts.length; i++) {
+      var pc = tr.counts[i] != null ? tr.counts[i]
+                                    : Math.max(1, Math.round(countsArr[i] / density));
+      total += pc;
+      if (i < state.pos.chapterIndex) before += pc;
+    }
+    return {
+      total: total,
+      current: before + state.pageIndex + 1,
+      exact: tr.done
+    };
+  }
+
+  function scheduleGlobalPack(book) {
+    var tr = ensurePackTracker(book);
+    if (packTimer) { global.clearTimeout(packTimer); packTimer = 0; }
+    var bookId = book.id;
+    function tick() {
+      packTimer = 0;
+      var cur = currentBook();
+      // 换书/换字号（指纹变了）、书页此刻不可见（扉页/退出）：停止，
+      // 下次 renderChapter 会带着完好的账本重新排班，绝不白烧主线程
+      if (!cur || cur.id !== bookId || !pageCache || bookPacks !== tr ||
+          !els['title-page'].hidden || els.reader.hidden) return;
+      var start = Date.now();
+      var m = null;
+      for (var i = 0; i < tr.counts.length; i++) {
+        if (tr.counts[i] != null || i === state.pos.chapterIndex) continue;
+        if (Date.now() - start > 140) break;            // 单批 ≤140ms，给输入/渲染让路
+        m = m || measBox();
+        tr.counts[i] = packPages(cur, i, m).length;
+        m.innerHTML = '';
+        renderPageFoot(cur);                            // 每装完一章，页脚就更准一点
+      }
+      tr.done = tr.counts.every(function (c) { return c != null; });
+      renderPageFoot(cur);
+      if (!tr.done) packTimer = global.setTimeout(tick, 180);
+    }
+    packTimer = global.setTimeout(tick, 220);
+  }
+
   /* ================= 定位与高亮（分页版） =================
      DOM 里只有当前页的句子，高亮按 data-i 匹配；
      要找的句子不在本页（朗读走到页尾、点句跳读、恢复进度）就先翻到那页。 */
@@ -628,7 +740,7 @@
     if (!currentBook() || !pageCache) return;
     var pi = core.findPage(pageCache.pages, cueIndex);
     if (pi !== state.pageIndex) showPage(pi, false);
-    var list = els.reader.querySelectorAll('.page-text .cue');
+    var list = els.reader.querySelectorAll('.page-box .page-text .cue');
     for (var i = 0; i < list.length; i++) {
       list[i].classList.toggle('active', Number(list[i].getAttribute('data-i')) === cueIndex);
     }
