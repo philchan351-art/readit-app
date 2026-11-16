@@ -618,3 +618,40 @@ option { background: var(--panel); color: var(--text); }
 @media (max-width: 860px) and (orientation: landscape) {
   .reader { height: 52svh; min-height: 260px; }
 }
+
+/* ============================================================
+   12. 整屏阅读（2026-11-15 用户：看书状态要整屏，只留少数按钮）
+   —— 进书时 body.reading：侧栏已由 JS 收起；章节条退出界面
+   （章名/页码/进度都在页脚，跳章走「目录」和页缘点击）；
+   顶栏变成悬浮在书页顶部的一条半透明控制带。
+   ============================================================ */
+.chapter-bar { display: none; }
+
+body.reading #app { height: 100vh; height: 100svh; overflow: hidden; }
+body.reading .main { height: auto; }
+body.reading .workbench { height: 100%; }
+
+body.reading .topbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 8;
+  justify-content: flex-end;
+  padding: 8px 14px 20px;
+  background: linear-gradient(180deg, var(--glass-strong) 40%, transparent);
+  border-bottom: 0; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+body.reading .title-wrap { display: none; }
+body.reading #btn-back { margin-right: auto; }
+
+/* 书页吃满剩余高度；顶部留出悬浮条的空间，字永远不躲在按钮底下 */
+body.reading .reader {
+  flex: 1 1 auto; min-height: 0; height: auto;
+  padding: 52px 30px 4px;
+}
+body.reading .listen { position: static; }
+
+@media (max-width: 860px) {
+  body.reading .reader { padding: 56px 16px 2px; }
+  body.reading .topbar { padding: 6px 10px 16px; gap: 6px; }
+  body.reading .btn.small { padding: 3px 8px; font-size: 11.5px; }
+  body.reading .mode { padding: 4px 10px; font-size: 12px; }
+}

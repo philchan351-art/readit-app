@@ -46,7 +46,7 @@
      'voice-select', 'engine-select', 'sleep-select', 'sleep-text', 'auto-next', 'status-text', 'tts-warn', 'toast',
      'btn-font-minus', 'btn-font-plus', 'btn-theme',
        'btn-export', 'btn-import-backup', 'backup-input', 'btn-show-samples',
-       'topbar', 'chapter-bar',
+       'topbar', 'chapter-bar', 'sidebar', 'btn-toc',
        'title-page', 'tp-cover', 'tp-title', 'tp-author', 'tp-line', 'tp-toc',
        'btn-tp-continue', 'btn-tp-restart', 'btn-tp-back'].forEach(function (id) {
       els[id] = doc.getElementById(id);
@@ -336,6 +336,7 @@
 
     els['empty-state'].hidden = true;
     els.workbench.hidden = false;
+    setChrome(true);                 // 阅读态：书架侧栏收起，书页吃满整屏
     els['book-title'].textContent = book.title;
     els['book-sub'].textContent = book.author + ' · ' + book.intro;
 
@@ -345,6 +346,12 @@
     renderTitlePage(book);
     // 记住这台设备最后在看的书：下次冷启动直接进扉页，一键回到上次那句
     if (state.settings.lastBookId !== id) { state.settings.lastBookId = id; saveSettings(); }
+  }
+
+  /** 阅读态开关：进书=收起书架侧栏（CSS 用 body.reading 把版面全部让给书页） */
+  function setChrome(open) {
+    doc.body.classList.toggle('reading', open);
+    els.sidebar.hidden = open;
   }
 
   /* ================= 扉页 ================= */
@@ -863,6 +870,7 @@
       engine.stop();
       els.workbench.hidden = true; els['empty-state'].hidden = false;
       showTitlePage(false);              // 复位扉页对各区块的遮挡，下次进书由 openBook 重新决定
+      setChrome(false);                  // 退出阅读态：书架侧栏回来
       pageCache = null;
       state.bookId = null; renderShelf();
       // 明确回到书架：下次启动不再自动进书，这是用户自己的选择
@@ -870,6 +878,12 @@
     });
 
     // 扉页三件套
+    // 顶栏「目录」：回扉页挑章。朗读先停，不然扉页上声音继续跑没处控
+    els['btn-toc'].addEventListener('click', function () {
+      if (!currentBook()) return;
+      engine.stop();
+      showTitlePage(true);
+    });
     els['btn-tp-continue'].addEventListener('click', function () {
       var book = currentBook();
       if (!book) return;
@@ -1034,6 +1048,8 @@
     els['listen-panel'].hidden = mode !== 'listen';
     state.follow = mode === 'listen';
     if (mode === 'listen') highlight(state.pos.cueIndex, true);
+    // 播放条出现/收起会改变书页高度：按新页高重装箱，锚点仍是当前句
+    if (state.bookId && pageCache && els['title-page'].hidden) renderChapter();
   }
 
   function bumpFont(delta) {

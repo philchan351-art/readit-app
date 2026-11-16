@@ -12,12 +12,12 @@
 <meta name="theme-color" content="#0E1A2C">
 <!-- ?v= 和下面 JS 一个道理：Chrome 会拿 CSS 的磁盘缓存，改完样式不加版本号，
      你会看到"改了没生效"。改 css 就把 v 往上加。 -->
-<link rel="stylesheet" href="css/app.css?v=15">
+<link rel="stylesheet" href="css/app.css?v=16">
 </head>
 <body>
 <div id="app">
 
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <header class="brand">
       <span class="logo">readit</span>
     </header>
@@ -76,6 +76,7 @@
           <span id="book-sub"></span>
         </div>
         <div class="typo-tools">
+          <button id="btn-toc" class="btn small" title="目录/扉页">目录</button>
           <button id="btn-font-minus" class="btn small" title="缩小字号">A-</button>
           <button id="btn-font-plus" class="btn small" title="放大字号">A+</button>
           <button id="btn-theme" class="btn small" title="切换主题">纸白</button>
@@ -165,6 +166,6 @@
 <script src="js/tts.js?v=9"></script>
 <script src="js/tts-cloud.js?v=9"></script>
 <script src="js/books-data.js?v=9"></script>
-<script src="js/app.js?v=12"></script>
+<script src="js/app.js?v=13"></script>
 </body>
 </html>
